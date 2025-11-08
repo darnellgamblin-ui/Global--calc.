@@ -1,0 +1,378 @@
+import React, { useState, useEffect } from "react";
+import { View, Text, TextInput, ScrollView, TouchableOpacity, Button, ActivityIndicator, StyleSheet } from "react-native";
+
+/* =========================
+   Currency data & helpers
+   ========================= */
+const CURRENCY_META = {
+  USD:{name:"US Dollar",flag:"🇺🇸",symbol:"$"}, EUR:{name:"Euro",flag:"🇪🇺",symbol:"€"},
+  JPY:{name:"Japanese Yen",flag:"🇯🇵",symbol:"¥"}, GBP:{name:"British Pound",flag:"🇬🇧",symbol:"£"},
+  AUD:{name:"Australian Dollar",flag:"🇦🇺",symbol:"A$"}, CAD:{name:"Canadian Dollar",flag:"🇨🇦",symbol:"C$"},
+  CHF:{name:"Swiss Franc",flag:"🇨🇭",symbol:"Fr"}, CNY:{name:"Chinese Yuan",flag:"🇨🇳",symbol:"¥"},
+  THB:{name:"Thai Baht",flag:"🇹🇭",symbol:"฿"}, INR:{name:"Indian Rupee",flag:"🇮🇳",symbol:"₹"},
+  RUB:{name:"Russian Ruble",flag:"🇷🇺",symbol:"₽"}, BRL:{name:"Brazilian Real",flag:"🇧🇷",symbol:"R$"},
+};
+const ALL_CODES = Object.keys(CURRENCY_META);
+const POPULAR = ["EUR","JPY","GBP","CHF","CAD","AUD","CNY","RUB"];
+const fmtNum = (n,d=2)=> (isNaN(n) ? "—" : new Intl.NumberFormat(undefined,{maximumFractionDigits:d}).format(n));
+const formatMoney = (code,n)=> `${CURRENCY_META[code]?.symbol||""} ${fmtNum(n,2)}`;
+
+/* =========================
+   Searchable picker modal
+   ========================= */
+function PickerModal({ visible, onClose, onSelect, exclude=[] }) {
+  const [q,setQ]=useState("");
+  const list=ALL_CODES.filter(c=>!exclude.includes(c))
+    .filter(c=>CURRENCY_META[c].name.toLowerCase().includes(q.toLowerCase())||c.toLowerCase().includes(q.toLowerCase()));
+  if(!visible)return null;
+  return(
+    <View style={styles.modalBackdrop}>
+      <View style={styles.modalCard}>
+        <Text style={styles.modalTitle}>Select currency</Text>
+        <TextInput placeholder="Search..." placeholderTextColor="#9aa0a6" value={q} onChangeText={setQ} style={styles.modalInput}/>
+        <ScrollView style={{maxHeight:300}}>
+          {list.map(c=>(
+            <TouchableOpacity key={c} style={styles.modalRow} onPress={()=>{onSelect(c);onClose();}}>
+              <Text style={styles.flag}>{CURRENCY_META[c].flag}</Text>
+              <View><Text style={styles.listTitle}>{CURRENCY_META[c].name}</Text><Text style={styles.listSub}>{c}</Text></View>
+            </TouchableOpacity>
+          ))}
+          {list.length===0&&<Text style={{color:"#9aa0a6",textAlign:"center",padding:10}}>No results</Text>}
+        </ScrollView>
+        <TouchableOpacity onPress={onClose} style={styles.modalClose}><Text style={{color:"white"}}>Close</Text></TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+/* =========================
+   Live-change converter
+   ========================= */
+const deltaInfo = (prev, curr) => {
+  if (typeof prev !== "number" || typeof curr !== "number" || !isFinite(prev) || prev===0) return {dir:0,pct:null};
+  const pct = ((curr - prev) / prev) * 100;
+  return { dir: pct>0 ? 1 : pct<0 ? -1 : 0, pct };
+};
+const DeltaPill = ({ pct }) => {
+  if (pct==null) return <Text style={styles.deltaFlat}>—</Text>;
+  const up = pct>0, down=pct<0;
+  return (
+    <View style={[styles.deltaPill, up?styles.deltaUp: down?styles.deltaDown:styles.deltaFlatBox]}>
+      <Text style={up?styles.deltaUpText: down?styles.deltaDownText:styles.deltaFlat}>{`${up?"▲":down?"▼":"■"} ${fmtNum(Math.abs(pct),2)}%`}</Text>
+    </View>
+  );
+};
+
+function Converter() {
+  const [base,setBase]=useState("THB"),[quote,setQuote]=useState("USD"),[amount,setAmount]=useState("100");
+  const [rates,setRates]=useState({}),[prevRates,setPrevRates]=useState(null);
+  const [loading,setLoading]=useState(false);
+  const [pickBase,setPickBase]=useState(false),[pickQuote,setPickQuote]=useState(false);
+  const [lastUpdated,setLastUpdated]=useState(null);
+
+  const fetchRates=async(force=false)=>{
+    setLoading(true);
+    try{
+      const r=await fetch(`https://api.exchangerate.host/latest?base=${base}`);
+      const j=await r.json();
+      setPrevRates(rates && !force ? rates : j.rates || {});
+      setRates(j.rates||{});
+      setLastUpdated(new Date());
+    }catch{}
+    setLoading(false);
+  };
+  useEffect(()=>{ fetchRates(true); },[base]);
+  useEffect(()=>{ const id=setInterval(()=>fetchRates(),30000); return ()=>clearInterval(id); },[base, rates]);
+
+  const swap=()=>{setBase(quote);setQuote(base);};
+  const rate=rates?.[quote]||null, converted=rate?parseFloat(amount||"0")*rate:null;
+  const headDelta = deltaInfo(prevRates?.[quote], rates?.[quote]);
+
+  return(
+    <View>
+      <Text style={styles.bigTitle}>Currency Converter</Text>
+      <View style={{flexDirection:"row",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+        <Text style={{color:"#9aa0a6",fontSize:12}}>
+          {lastUpdated ? `Updated ${lastUpdated.toLocaleTimeString()}` : "—"}
+        </Text>
+        <TouchableOpacity onPress={()=>fetchRates(true)}><Text style={{color:"#60a5fa"}}>Refresh</Text></TouchableOpacity>
+      </View>
+
+      <View style={styles.convRow}>
+        <View style={styles.convCard}>
+          <TouchableOpacity onPress={()=>setPickBase(true)} style={styles.convHeader}>
+            <Text style={styles.flag}>{CURRENCY_META[base].flag}</Text>
+            <Text style={styles.convName}>{CURRENCY_META[base].name}</Text>
+          </TouchableOpacity>
+          <TextInput style={styles.convInput} value={amount} onChangeText={setAmount} keyboardType="numeric" placeholder={`${CURRENCY_META[base].symbol} 0`} placeholderTextColor="#9aa0a6"/>
+        </View>
+
+        <TouchableOpacity onPress={swap} style={styles.swapBtn}><Text style={{color:"white",fontSize:18}}>↔︎</Text></TouchableOpacity>
+
+        <View style={styles.convCard}>
+          <TouchableOpacity onPress={()=>setPickQuote(true)} style={styles.convHeader}>
+            <Text style={styles.flag}>{CURRENCY_META[quote].flag}</Text>
+            <Text style={styles.convName}>{CURRENCY_META[quote].name}</Text>
+          </TouchableOpacity>
+          <View style={[styles.convOutputBox,{flexDirection:"row",justifyContent:"space-between",alignItems:"center"}]}>
+            {loading ? <ActivityIndicator/> : <>
+              <Text style={styles.convOutput}>{formatMoney(quote,converted)}</Text>
+              <DeltaPill pct={headDelta.pct}/>
+            </>}
+          </View>
+        </View>
+      </View>
+
+      <View style={{marginTop:16}}>
+        {POPULAR.map(cc=>{
+          const meta=CURRENCY_META[cc];
+          const curr=rates?.[cc], prev=prevRates?.[cc];
+          const v = curr ? parseFloat(amount||"0")*curr : null;
+          const d = deltaInfo(prev, curr);
+          return(
+            <View key={cc} style={styles.listRow}>
+              <View style={{flexDirection:"row",alignItems:"center",gap:10}}>
+                <Text style={styles.flag}>{meta.flag}</Text>
+                <View><Text style={styles.listTitle}>{meta.name}</Text><Text style={styles.listSub}>{cc}</Text></View>
+              </View>
+              <View style={{alignItems:"flex-end"}}>
+                <Text style={styles.listValue}>{formatMoney(cc,v)}</Text>
+                <DeltaPill pct={d.pct}/>
+              </View>
+            </View>
+          );
+        })}
+      </View>
+      <PickerModal visible={pickBase} onClose={()=>setPickBase(false)} onSelect={c=>setBase(c)} exclude={[quote]}/>
+      <PickerModal visible={pickQuote} onClose={()=>setPickQuote(false)} onSelect={c=>setQuote(c)} exclude={[base]}/>
+    </View>
+  );
+}
+
+/* =========================
+   Economic Calendar
+   ========================= */
+const nthWeekdayOfMonth = (y,m,weekday,n) => {
+  const first=new Date(y,m,1), offset=(weekday-first.getDay()+7)%7;
+  return new Date(y,m,1+offset+(n-1)*7);
+};
+const firstFriday=(y,m)=>nthWeekdayOfMonth(y,m,5,1);
+const secondWed=(y,m)=>nthWeekdayOfMonth(y,m,3,2);
+const thirdWed=(y,m)=>nthWeekdayOfMonth(y,m,3,3);
+const thirdFri=(y,m)=>nthWeekdayOfMonth(y,m,5,3);
+const thirdThu=(y,m)=>nthWeekdayOfMonth(y,m,4,3);
+const RULES=[
+  {id:"US-NFP",name:"US Nonfarm Payrolls",country:"US",compute:firstFriday},
+  {id:"US-CPI",name:"US CPI (YoY/MoM)",country:"US",compute:secondWed},
+  {id:"UK-CPI",name:"UK CPI",country:"GB",compute:thirdWed},
+  {id:"EU-ECB",name:"ECB Rate Decision",country:"EU",compute:thirdThu},
+  {id:"JP-CPI",name:"Japan CPI",country:"JP",compute:thirdFri},
+];
+const FLAGS={US:"🇺🇸",EU:"🇪🇺",GB:"🇬🇧",JP:"🇯🇵"};
+function buildEvents(){
+  const now=new Date(), out=[];
+  for(let a=0;a<3;a++){
+    const d=new Date(now.getFullYear(),now.getMonth()+a,1);
+    for(const r of RULES){
+      const dt=r.compute(d.getFullYear(),d.getMonth());
+      if(dt.getMonth()===d.getMonth())out.push({id:r.id+"-"+a,date:dt,name:r.name,country:r.country});
+    }
+  }
+  return out.sort((a,b)=>a.date-b.date);
+}
+function Calendar(){
+  const evs=buildEvents();
+  const grouped={};
+  evs.forEach(e=>{
+    const k=e.date.toLocaleString(undefined,{month:"long",year:"numeric"});
+    (grouped[k]??=[]).push(e);
+  });
+  return(
+    <View>
+      <Text style={styles.sectionTitle}>Economic Calendar</Text>
+      <Text style={{color:"#9aa0a6",marginBottom:8}}>Estimated upcoming releases</Text>
+      {Object.entries(grouped).map(([k,arr])=>(
+        <View key={k} style={{marginBottom:8}}>
+          <Text style={{color:"white",fontWeight:"700",marginBottom:6}}>{k}</Text>
+          {arr.map(ev=>(
+            <View key={ev.id} style={styles.card}>
+              <Text style={styles.listTitle}>{FLAGS[ev.country]} {ev.name}</Text>
+              <Text style={styles.listSub}>{ev.date.toLocaleDateString()}</Text>
+            </View>
+          ))}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+/* =========================
+   Reports (World Bank)
+   ========================= */
+async function fetchWBLatest(cc,ind){
+  const u=`https://api.worldbank.org/v2/country/${cc}/indicator/${ind}?format=json&per_page=60`;
+  const r=await fetch(u);const j=await r.json();const s=j?.[1]??[];const x=s.find(d=>d.value!==null);
+  return{value:x?.value??null,date:x?.date??""};
+}
+const COUNTRIES=[{code:"US",label:"United States"},{code:"CN",label:"China"},{code:"JP",label:"Japan"},{code:"DE",label:"Germany"},{code:"GB",label:"UK"}];
+function Reports({selectedCountry,setSelectedCountry}){
+  const [vals,setVals]=useState({}),[loading,setLoading]=useState(false);
+  const inds=[{k:"gdp",n:"GDP Growth",c:"NY.GDP.MKTP.KD.ZG",s:"%"},{k:"cpi",n:"Inflation",c:"FP.CPI.TOTL.ZG",s:"%"},{k:"u",n:"Unemployment",c:"SL.UEM.TOTL.ZS",s:"%"},{k:"t",n:"Trade % GDP",c:"NE.TRD.GNFS.ZS",s:"%"}];
+  const load=async()=>{setLoading(true);try{const res=await Promise.all(inds.map(async i=>[i.k,await fetchWBLatest(selectedCountry,i.c)]));const o={};res.forEach(([k,v])=>o[k]=v);setVals(o);}finally{setLoading(false);}};
+  useEffect(()=>{load();},[selectedCountry]);
+  return(<View>
+    <Text style={styles.sectionTitle}>Reports</Text>
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{marginBottom:8}}>
+      <View style={{flexDirection:"row",gap:8}}>
+        {COUNTRIES.map(c=>(
+          <TouchableOpacity key={c.code} onPress={()=>setSelectedCountry(c.code)} style={[styles.chip,selectedCountry===c.code&&styles.chipActive]}>
+            <Text style={styles.chipText}>{c.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    </ScrollView>
+    {loading?<ActivityIndicator/>:inds.map(i=>{
+      const v=vals[i.k];return(<View key={i.k} style={styles.card}><Text style={styles.label}>{i.n}</Text><Text style={styles.value}>{v?.value?`${v.value.toFixed(1)}${i.s}`:"—"}</Text><Text style={styles.sub}>World Bank • {v?.date||"—"}</Text></View>);
+    })}
+    <Button title="Refresh" onPress={load}/>
+  </View>);
+}
+
+/* =========================
+   Home (bubbly buttons)
+   ========================= */
+function Home({ go }) {
+  return (
+    <View>
+      <Text style={styles.sectionTitle}>Welcome to GlobaCalc</Text>
+      <Text style={{color:"#9aa0a6",marginBottom:12}}>
+        Live currency changes • Global reports • Economic calendar.
+      </Text>
+
+      <TouchableOpacity style={[styles.bubble, styles.bubbleBlue]} onPress={()=>go("Converter")}>
+        <View style={styles.bubbleRow}>
+          <Text style={styles.bubbleEmoji}>💱</Text>
+          <View style={{flex:1}}>
+            <Text style={styles.bubbleTitle}>Open Converter</Text>
+            <Text style={styles.bubbleSub}>Live rates & % change</Text>
+          </View>
+          <Text style={styles.bubbleChevron}>›</Text>
+        </View>
+      </TouchableOpacity>
+
+      <TouchableOpacity style={[styles.bubble, styles.bubbleTeal]} onPress={()=>go("Calendar")}>
+        <View style={styles.bubbleRow}>
+          <Text style={styles.bubbleEmoji}>🗓️</Text>
+          <View style={{flex:1}}>
+            <Text style={styles.bubbleTitle}>Economic Calendar</Text>
+            <Text style={styles.bubbleSub}>Upcoming major releases</Text>
+          </View>
+          <Text style={styles.bubbleChevron}>›</Text>
+        </View>
+      </TouchableOpacity>
+
+      <TouchableOpacity style={[styles.bubble, styles.bubblePurple]} onPress={()=>go("Reports")}>
+        <View style={styles.bubbleRow}>
+          <Text style={styles.bubbleEmoji}>📊</Text>
+          <View style={{flex:1}}>
+            <Text style={styles.bubbleTitle}>Global Reports</Text>
+            <Text style={styles.bubbleSub}>GDP • CPI • Unemployment</Text>
+          </View>
+          <Text style={styles.bubbleChevron}>›</Text>
+        </View>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+/* =========================
+   Root
+   ========================= */
+export default function App(){
+  const [tab,setTab]=useState("Home"),[country,setCountry]=useState("US");
+  return(
+    <View style={styles.screen}>
+      <View style={styles.header}><Text style={styles.title}>GlobaCalc</Text></View>
+      <View style={styles.tabs}>
+        {["Home","Converter","Calendar","Reports"].map(t=>(
+          <TouchableOpacity key={t} onPress={()=>setTab(t)}><Text style={[styles.tabText,tab===t&&styles.tabActive]}>{t}</Text></TouchableOpacity>
+        ))}
+      </View>
+      <ScrollView contentContainerStyle={{padding:16}}>
+        {tab==="Home"&&<Home go={setTab}/>}
+        {tab==="Converter"&&<Converter/>}
+        {tab==="Calendar"&&<Calendar/>}
+        {tab==="Reports"&&<Reports selectedCountry={country} setSelectedCountry={setCountry}/>}
+      </ScrollView>
+    </View>
+  );
+}
+
+/* =========================
+   Styles
+   ========================= */
+const styles=StyleSheet.create({
+  screen:{flex:1,backgroundColor:"#0f172a"},
+  header:{padding:16,borderBottomWidth:1,borderBottomColor:"#1f2937"},
+  title:{color:"white",fontWeight:"bold",fontSize:20},
+  tabs:{flexDirection:"row",justifyContent:"space-around",paddingVertical:8,backgroundColor:"#111827"},
+  tabText:{color:"#9ca3af",fontSize:14},tabActive:{color:"white",fontWeight:"600"},
+  sectionTitle:{color:"white",fontSize:20,fontWeight:"600",marginBottom:8},
+  bigTitle:{color:"white",fontSize:24,fontWeight:"700",marginBottom:8},
+
+  /* Converter cards */
+  convRow:{flexDirection:"row",alignItems:"center",gap:12},
+  convCard:{flex:1,backgroundColor:"#1a1f2e",borderRadius:12,padding:12},
+  convHeader:{flexDirection:"row",alignItems:"center",gap:8,marginBottom:6},
+  flag:{fontSize:22},convName:{color:"white",fontWeight:"600"},
+  convInput:{backgroundColor:"#2a2f3f",color:"white",borderRadius:8,padding:10,fontSize:16},
+  swapBtn:{width:40,height:40,borderRadius:20,backgroundColor:"#3b82f6",alignItems:"center",justifyContent:"center"},
+  convOutputBox:{backgroundColor:"#2a2f3f",borderRadius:8,padding:10,minHeight:44,justifyContent:"center"},
+  convOutput:{color:"white",fontSize:18,fontWeight:"600"},
+
+  /* Cards & list */
+  card:{backgroundColor:"#111827",padding:14,borderRadius:12,marginBottom:8},
+  label:{color:"#9ca3af"},value:{color:"white",fontSize:20,fontWeight:"700"},sub:{color:"#6b7280",fontSize:12},
+  chip:{backgroundColor:"#1f2937",paddingVertical:6,paddingHorizontal:10,borderRadius:16},chipActive:{backgroundColor:"#14b8a6"},
+  chipText:{color:"white",fontSize:12},
+  listRow:{flexDirection:"row",justifyContent:"space-between",alignItems:"center",paddingVertical:14,borderBottomWidth:1,borderBottomColor:"#222834"},
+  listTitle:{color:"white",fontSize:16,fontWeight:"600"},listSub:{color:"#98a2b3",fontSize:12},
+  listValue:{color:"white",fontSize:16,fontWeight:"700"},
+
+  /* delta styles */
+  deltaPill:{marginTop:4,borderRadius:999,paddingVertical:2,paddingHorizontal:8,alignSelf:"flex-end"},
+  deltaUp:{backgroundColor:"rgba(34,197,94,0.15)"}, deltaUpText:{color:"#22c55e",fontWeight:"700"},
+  deltaDown:{backgroundColor:"rgba(239,68,68,0.15)"}, deltaDownText:{color:"#ef4444",fontWeight:"700"},
+  deltaFlatBox:{backgroundColor:"rgba(148,163,184,0.15)"}, deltaFlat:{color:"#94a3b8",fontWeight:"600"},
+
+  /* modal */
+  modalBackdrop:{position:"absolute",left:0,right:0,top:0,bottom:0,backgroundColor:"rgba(0,0,0,0.6)",justifyContent:"center",alignItems:"center"},
+  modalCard:{width:"92%",backgroundColor:"#111827",borderRadius:12,padding:12},
+  modalTitle:{color:"white",fontSize:18,fontWeight:"600",marginBottom:8},
+  modalInput:{backgroundColor:"#1f2937",color:"white",borderRadius:8,padding:10,marginBottom:8},
+  modalRow:{flexDirection:"row",alignItems:"center",gap:10,paddingVertical:10,borderBottomWidth:1,borderBottomColor:"#222834"},
+  modalClose:{marginTop:10,backgroundColor:"#3b82f6",paddingVertical:10,borderRadius:8,alignItems:"center"},
+
+  /* Bubbly home buttons */
+  bubble:{
+    backgroundColor:"#1f2937",
+    borderRadius:20,
+    padding:16,
+    marginBottom:14,
+    minHeight:110,
+    justifyContent:"center",
+    shadowColor:"#000",
+    shadowOpacity:0.25,
+    shadowRadius:12,
+    shadowOffset:{width:0,height:8},
+    elevation:6,
+  },
+  bubbleBlue:{ backgroundColor:"#1e293b" },
+  bubbleTeal:{ backgroundColor:"#133a3a" },
+  bubblePurple:{ backgroundColor:"#2b1e3b" },
+  bubbleRow:{ flexDirection:"row", alignItems:"center", gap:14 },
+  bubbleEmoji:{ fontSize:34 },
+  bubbleTitle:{ color:"white", fontSize:18, fontWeight:"800", marginBottom:2 },
+  bubbleSub:{ color:"#a3b1c6", fontSize:13 },
+  bubbleChevron:{ color:"#94a3b8", fontSize:28, fontWeight:"600" },
+});
