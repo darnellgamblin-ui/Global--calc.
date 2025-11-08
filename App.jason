@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "Global Calc",
+    "slug": "global-calc",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "backgroundColor": "#0f172a",
+    "androidStatusBar": { "barStyle": "light-content", "backgroundColor": "#0f172a" },
+    "sdkVersion": "51.0.0",
+    "platforms": ["android"],
+    "android": {
+      "package": "com.deegeebiase.globalcalc",
+      "versionCode": 1,
+      "adaptiveIcon": { "backgroundColor": "#0f172a" },
+      "permissions": []
+    }
+  }
+}
